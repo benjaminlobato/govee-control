@@ -143,7 +143,7 @@ cmd_color() {
         green)  color="00ff00" ;;
         blue)   color="0000ff" ;;
         white)  color="ffffff" ;;
-        warm)   color="ffaa55" ;;
+        warm)   color="ff7722" ;;
         cool)   color="aaccff" ;;
         purple) color="aa00ff" ;;
         orange) color="ff5500" ;;
