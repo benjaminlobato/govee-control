@@ -1,0 +1,18 @@
+{
+  "devices": [
+    {
+      "name": "Devin Office Monitor",
+      "ip": "192.168.1.170",
+      "model": "H6056",
+      "device_id": "3C:A1:D5:0E:C3:86:3C:27",
+      "port": 4003
+    },
+    {
+      "name": "Living Room TV Stand",
+      "ip": "192.168.1.171",
+      "model": "H61C3",
+      "device_id": "21:C1:32:34:35:58:1B:FF",
+      "port": 4003
+    }
+  ]
+}
