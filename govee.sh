@@ -2,9 +2,16 @@
 # Govee Light Control Script
 # Controls Govee lights via LAN API (requires LAN mode enabled in Govee app)
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 DEVICES_FILE="$SCRIPT_DIR/devices.json"
-POWERSHELL="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+
+# Detect platform: WSL uses PowerShell for UDP, native Linux uses socat
+if grep -qi microsoft /proc/version 2>/dev/null; then
+    PLATFORM="wsl"
+    POWERSHELL="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+else
+    PLATFORM="linux"
+fi
 
 # Colors
 RED='\033[0;31m'
@@ -57,13 +64,17 @@ send_command() {
     local port="$2"
     local cmd="$3"
 
-    $POWERSHELL -Command "
-        \$udp = New-Object System.Net.Sockets.UdpClient
-        \$endpoint = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Parse('$ip'), $port)
-        \$bytes = [System.Text.Encoding]::UTF8.GetBytes('$cmd')
-        \$udp.Send(\$bytes, \$bytes.Length, \$endpoint) | Out-Null
-        \$udp.Close()
-    " 2>/dev/null
+    if [[ "$PLATFORM" == "wsl" ]]; then
+        $POWERSHELL -Command "
+            \$udp = New-Object System.Net.Sockets.UdpClient
+            \$endpoint = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Parse('$ip'), $port)
+            \$bytes = [System.Text.Encoding]::UTF8.GetBytes('$cmd')
+            \$udp.Send(\$bytes, \$bytes.Length, \$endpoint) | Out-Null
+            \$udp.Close()
+        " 2>/dev/null
+    else
+        echo -n "$cmd" | socat - UDP-SENDTO:"$ip":"$port"
+    fi
 }
 
 cmd_list() {
@@ -74,27 +85,40 @@ cmd_list() {
 
 cmd_scan() {
     echo -e "${BLUE}Scanning for Govee devices...${NC}"
-    $POWERSHELL -Command '
-        $udpClient = New-Object System.Net.Sockets.UdpClient(4002)
-        $udpClient.EnableBroadcast = $true
-        $udpClient.Client.ReceiveTimeout = 3000
+    if [[ "$PLATFORM" == "wsl" ]]; then
+        $POWERSHELL -Command '
+            $udpClient = New-Object System.Net.Sockets.UdpClient(4002)
+            $udpClient.EnableBroadcast = $true
+            $udpClient.Client.ReceiveTimeout = 3000
 
-        $msg = "{\"msg\":{\"cmd\":\"scan\",\"data\":{\"account_topic\":\"reserve\"}}}"
-        $bytes = [System.Text.Encoding]::UTF8.GetBytes($msg)
-        $endpoint = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Parse("255.255.255.255"), 4001)
-        $udpClient.Send($bytes, $bytes.Length, $endpoint) | Out-Null
+            $msg = "{\"msg\":{\"cmd\":\"scan\",\"data\":{\"account_topic\":\"reserve\"}}}"
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($msg)
+            $endpoint = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Parse("255.255.255.255"), 4001)
+            $udpClient.Send($bytes, $bytes.Length, $endpoint) | Out-Null
 
-        $remote = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
-        while ($true) {
-            try {
-                $data = $udpClient.Receive([ref]$remote)
-                $text = [System.Text.Encoding]::UTF8.GetString($data)
-                $json = $text | ConvertFrom-Json
-                Write-Host "Found: $($json.msg.data.ip) - $($json.msg.data.sku) ($($json.msg.data.device))"
-            } catch { break }
-        }
-        $udpClient.Close()
-    ' 2>/dev/null
+            $remote = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
+            while ($true) {
+                try {
+                    $data = $udpClient.Receive([ref]$remote)
+                    $text = [System.Text.Encoding]::UTF8.GetString($data)
+                    $json = $text | ConvertFrom-Json
+                    Write-Host "Found: $($json.msg.data.ip) - $($json.msg.data.sku) ($($json.msg.data.device))"
+                } catch { break }
+            }
+            $udpClient.Close()
+        ' 2>/dev/null
+    else
+        local scan_msg='{"msg":{"cmd":"scan","data":{"account_topic":"reserve"}}}'
+        echo -n "$scan_msg" | socat - UDP-DATAGRAM:255.255.255.255:4001,broadcast &
+        socat -T3 UDP-RECV:4002 STDOUT 2>/dev/null | while read -r line; do
+            local ip=$(echo "$line" | jq -r '.msg.data.ip' 2>/dev/null)
+            local sku=$(echo "$line" | jq -r '.msg.data.sku' 2>/dev/null)
+            local device=$(echo "$line" | jq -r '.msg.data.device' 2>/dev/null)
+            if [[ -n "$ip" && "$ip" != "null" ]]; then
+                echo "Found: $ip - $sku ($device)"
+            fi
+        done
+    fi
 }
 
 cmd_on() {
